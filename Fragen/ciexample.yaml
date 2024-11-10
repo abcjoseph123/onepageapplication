@@ -1,0 +1,88 @@
+trigger:
+  branches:
+    include:
+      - dev
+      - main
+      - staging
+
+stages:
+  - stage: "Infrastructure"
+    displayName: "Provisioning"
+    jobs:
+      - job: "Terraform"
+        displayName: "Terraform Apply"
+        condition: 
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - checkout: self       
+          - task: UsePythonVersion
+            inputs:
+              versionSpec: '3.x'
+              addToPath: true
+          - task: InstallTerraform
+            inputs:
+              terraformVersion: 'latest'
+          - script: |
+              if [ "${BUILD_SOURCEBRANCHNAME}" == "dev" ]; then
+                -var="environment=development"
+              elif [ "${BUILD_SOURCEBRANCHNAME}" == "staging" ]; then
+                -var="environment=staging"
+              elif [ "${BUILD_SOURCEBRANCHNAME}" == "main" ]; then
+                -var="environment=main"
+              fi
+              terraform init
+              terraform apply var -auto-approve
+            displayName: "Terraform Apply"
+  - stage: "BuildFrontend"
+    displayName: "Build and Deploy Vue.js Frontend"
+    dependsOn: Infrastructure
+    jobs:
+      - job: "Build_Frontend"
+        displayName: "Build Vue.js Application"
+        pool:
+          vmImage: 'ubuntu-latest'       
+        condition: 
+        steps:
+          - checkout: self
+          - task: UseNode
+            inputs:
+              versionSpec: '16.x'
+              checkLatest: true
+          - script: |
+              cd frontend
+              npm install
+              npm run build
+            displayName: "Install and Build Vue.js App"
+          - task: AzureStaticWebApp
+            inputs:
+              app_location: "frontend"
+              output_location: "dist"
+              azure_static_web_apps_api_token: $(azureStaticWebAppToken)
+            displayName: "Deploy Vue.js to Azure Static Web Apps"
+  - stage: "BuildBackend"
+    displayName: "Build and Deploy Node.js Backend"
+    dependsOn: Infrastructure
+    jobs:
+      - job: "Build_Backend"
+        displayName: "Build Node.js Application"
+        pool:
+          vmImage: 'ubuntu-latest'
+        condition:
+        steps:
+          - checkout: self
+          - task: UseNode@1
+            inputs:
+              versionSpec: '16.x'
+              checkLatest: true
+          - script: |
+              cd backend
+              npm install
+              npm run build
+            displayName: "Install and Build Node.js Backend"
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: $(azureSubscription)
+              appName: $(backendAppServiceName)
+              package: "$(System.DefaultWorkingDirectory)/backend"
+            displayName: "Deploy Node.js Backend to Azure Web App"
